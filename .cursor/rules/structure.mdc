@@ -1,0 +1,16 @@
+---
+description: Repository structure and conventions for AgentDashboard
+alwaysApply: true
+---
+# Structure
+
+orchestrator/      - dispatch, planning, result synthesis
+workers/<name>/    - one folder per worker type; each contains its runtime code
+prompts/<name>/    - versioned system prompts, vN.md per version
+eval/<name>/       - golden-set test cases + scoring for that worker
+dashboard/         - React + React Flow frontend
+specs/<ticket>/    - requirements.md, design.md, tasks.md for the ticket in progress; delete
+                     or archive after merge
+
+Branch naming: feature/<ticket-name>. One ticket = one branch = one agent session.
+Every ticket that touches a prompt file must show an eval score in its PR description before merge.

@@ -1,0 +1,15 @@
+---
+description: Product purpose and goals for AgentDashboard
+alwaysApply: true
+---
+# Product
+
+AgentDashboard is a personal multi-agent orchestration system with a live visual control panel.
+It lets one orchestrator agent decompose a goal into subtasks, dispatch them to persistent
+"worker" agents (coding agent, PM, outreach, research specialist, etc.), and spawn short-lived
+subagents per subtask. The dashboard shows workers as persistent nodes; clicking a worker
+assigns it a task and shows subagents spawning/completing in real time.
+
+Primary goal: reliable, unattended execution of well-scoped tasks with minimal live oversight,
+gated by eval-tested prompts, not "vibes." This is a tool for the owner's own project work, not
+a product for other users. Optimize for correctness and debuggability over polish.

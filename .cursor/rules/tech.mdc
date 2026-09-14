@@ -1,0 +1,18 @@
+---
+description: Approved stack and technical constraints for AgentDashboard
+alwaysApply: true
+---
+# Tech Stack
+
+- Backend: Python. Orchestrator/worker loop follows the orchestrator-worker (supervisor) pattern.
+- Orchestration framework: LangGraph (create_supervisor) unless a ticket's design.md says otherwise.
+- Model tiering: strong hosted model (Claude/GPT-class) for the orchestrator and any worker doing
+  multi-step reasoning. Local Ollama models are allowed only for narrow, well-defined worker tasks
+  with low reasoning depth.
+- Event transport: WebSockets. Orchestrator/worker lifecycle events (spawned, thinking, tool_call,
+  subagent_spawned, completed, error) are emitted as structured events, not free text.
+- Frontend: React + TypeScript + React Flow for the node-based board. No game engine (no Phaser).
+  Gamified visual elements (progress bars, status badges) are CSS/component-level only.
+- Prompts: stored as versioned files under prompts/<worker-name>/vN.md. Never edit a prompt file
+  without running its golden-set eval first.
+- Do not add a new framework/library without updating this file in the same PR.
