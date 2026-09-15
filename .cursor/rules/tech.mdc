@@ -11,6 +11,9 @@ alwaysApply: true
   with low reasoning depth.
 - Event transport: WebSockets. Orchestrator/worker lifecycle events (spawned, thinking, tool_call,
   subagent_spawned, completed, error) are emitted as structured events, not free text.
+- Event/API server: FastAPI on uvicorn, with `websockets` as the WebSocket implementation. The
+  orchestrator runs as a persistent process serving `WS /events` plus a small HTTP surface for
+  submitting goals; `orchestrator.run` stays as a one-shot CLI for runs that need no dashboard.
 - Frontend: React + TypeScript + React Flow for the node-based board. No game engine (no Phaser).
   Gamified visual elements (progress bars, status badges) are CSS/component-level only.
 - Prompts: stored as versioned files under prompts/<worker-name>/vN.md. Never edit a prompt file

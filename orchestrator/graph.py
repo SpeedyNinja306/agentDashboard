@@ -75,9 +75,13 @@ def build_graph() -> Any:
     return builder.compile()
 
 
-def run_goal(goal: str) -> WorkerResult:
-    """Run `goal` through the loop. Returns an envelope for every outcome, including graph faults."""
-    events.start_run()
+def run_goal(goal: str, *, run_id: str | None = None) -> WorkerResult:
+    """Run `goal` through the loop. Returns an envelope for every outcome, including graph faults.
+
+    `run_id` becomes the orchestrator's agent_id for this run; the server passes its task_id so
+    clients can tie a stream of events back to the task that produced them.
+    """
+    events.start_run(run_id)
     try:
         final_state = build_graph().invoke({"goal": goal})
     except Exception as exc:
