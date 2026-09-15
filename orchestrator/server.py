@@ -1,14 +1,16 @@
 """Persistent orchestrator process: `python -m orchestrator.server`.
 
 Replaces the one-shot CLI as the way the orchestrator runs. The process stays up, accepts goals
-over HTTP, runs them one at a time, and broadcasts each lifecycle event to every connected
-WebSocket client as it happens.
+over HTTP, runs them on per-worker lanes (one at a time within a worker, different workers
+concurrently), and broadcasts each lifecycle event to every connected WebSocket client as it
+happens.
 
-    POST /tasks          {"goal": "..."} -> 202 with the task record
-    GET  /tasks          every task the process still remembers
-    GET  /tasks/{id}     one task, including its result envelope once finished
-    GET  /health         client count, queue depth, currently running task
-    WS   /events         the live event stream; `?replay=N` to catch up first
+    POST /tasks                  {"goal": "..."} -> 202; the router picks the worker
+    POST /workers/{name}/tasks   {"goal": "..."} -> 202; dispatch to a named worker
+    GET  /tasks                  every task the process still remembers
+    GET  /tasks/{id}             one task, including its result envelope once finished
+    GET  /health                 clients, queue depth per worker, the running task per worker
+    WS   /events                 the live event stream; `?replay=N` to catch up first
 
 **The WebSocket carries lifecycle events and nothing else.** Every frame is exactly one of
 ticket 3's events, serialized exactly as that ticket wrote it to stdout. No envelopes, no acks,
@@ -36,13 +38,15 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from orchestrator import events
+from orchestrator import events, router
 from orchestrator.graph import run_goal
 from orchestrator.hub import EventHub, Subscriber
-from orchestrator.tasks import QueueFull, TaskQueue, TaskRecord
+from orchestrator.tasks import QueueFull, TaskQueue, TaskRecord, UnknownWorker
+from workers import registry
 
-#: Workers that accept direct task submissions from the dashboard.
-KNOWN_WORKERS: frozenset[str] = frozenset({"research-specialist"})
+#: Workers that accept direct task submissions from the dashboard. Sourced from the registry so
+#: "which workers exist" has exactly one answer and a new worker needs no edit here.
+KNOWN_WORKERS: frozenset[str] = frozenset(registry.worker_names())
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +67,7 @@ class SubmitGoal(BaseModel):
 
 def create_app() -> FastAPI:
     hub = EventHub()
-    queue = TaskQueue(run_goal)
+    queue = TaskQueue(run_goal, workers=registry.worker_names())
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -107,36 +111,34 @@ def _register_routes(app: FastAPI, hub: EventHub, queue: TaskQueue) -> None:
     async def health() -> dict[str, Any]:
         return {
             "status": "ok",
+            "workers": sorted(KNOWN_WORKERS),
             "clients": hub.client_count,
             "events_published": hub.published_count,
             "replay_available": hub.replay_available,
             "queued": queue.pending_count,
-            "running": queue.running_id,
+            "queued_by_worker": queue.pending_by_worker(),
+            "running": queue.running_ids,
         }
 
     @app.post("/tasks", status_code=status.HTTP_202_ACCEPTED)
     async def submit_task(body: SubmitGoal) -> dict[str, Any]:
+        """Submit a goal with no worker named; the router picks one from the goal text."""
         goal = body.goal.strip()
         if not goal:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="goal is empty; nothing to research",
+                detail="goal is empty; nothing to dispatch",
             )
-        try:
-            record = queue.submit(goal)
-        except QueueFull as exc:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
-            ) from exc
-        return record.to_dict()
+        selected = router.select_worker(goal)
+        return _submit(queue, goal, selected)
 
     @app.post("/workers/{worker_name}/tasks", status_code=status.HTTP_202_ACCEPTED)
     async def submit_worker_task(worker_name: str, body: SubmitGoal) -> dict[str, Any]:
         """Submit a goal to a specific named worker.
 
-        The worker name must be one of the registered workers. Today there is only one
-        (research-specialist), but the endpoint is named so the dashboard can address
-        workers by identity once more are added.
+        The worker name must be one of the registered workers. This is the explicit-selection path
+        the dashboard uses when a worker node is clicked; the chosen worker is honoured verbatim
+        rather than being re-routed from the goal text.
         """
         if worker_name not in KNOWN_WORKERS:
             raise HTTPException(
@@ -147,15 +149,9 @@ def _register_routes(app: FastAPI, hub: EventHub, queue: TaskQueue) -> None:
         if not goal:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="goal is empty; nothing to research",
+                detail="goal is empty; nothing to dispatch",
             )
-        try:
-            record = queue.submit(goal)
-        except QueueFull as exc:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
-            ) from exc
-        return record.to_dict()
+        return _submit(queue, goal, worker_name)
 
     @app.get("/tasks")
     async def list_tasks() -> dict[str, Any]:
@@ -183,6 +179,23 @@ def _register_routes(app: FastAPI, hub: EventHub, queue: TaskQueue) -> None:
             await _serve_client(websocket, subscriber)
         finally:
             hub.unsubscribe(subscriber)
+
+
+def _submit(queue: TaskQueue, goal: str, worker: str) -> dict[str, Any]:
+    """Queue `goal` on `worker`'s lane, mapping queue faults to HTTP errors."""
+    try:
+        record = queue.submit(goal, worker)
+    except UnknownWorker as exc:
+        # The endpoints validate worker names before calling this, so reaching here means the
+        # registry and the queue's lanes disagree — a server bug, not a bad request.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    except QueueFull as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
+        ) from exc
+    return record.to_dict()
 
 
 async def _serve_client(websocket: WebSocket, subscriber: Subscriber) -> None:
