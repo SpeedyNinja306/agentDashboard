@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from orchestrator import events as _events
 from workers.contracts import WorkerResult, failure, parse_payload
 from workers.model import ModelBackend, ModelCallFailed, ModelUnavailable, resolve_backend
 
@@ -49,11 +50,37 @@ def run(goal: str, *, backend: ModelBackend | None = None) -> WorkerResult:
         except ModelUnavailable as exc:
             return failure(f"no model backend available: {exc}")
 
+        wid = _events.worker_id()
+        _events.emit(
+            "tool_call_start",
+            wid,
+            WORKER_NAME,
+            {"backend": getattr(active_backend, "name", "?"), "goal_preview": goal.strip()[:80]},
+        )
+
         try:
             raw = active_backend.complete(system=system_prompt, user=goal.strip())
+            _events.emit(
+                "tool_call_end",
+                wid,
+                WORKER_NAME,
+                {"backend": getattr(active_backend, "name", "?"), "status": "ok"},
+            )
         except (ModelCallFailed, ModelUnavailable) as exc:
+            _events.emit(
+                "tool_call_end",
+                wid,
+                WORKER_NAME,
+                {"backend": getattr(active_backend, "name", "?"), "status": "error", "error": str(exc)},
+            )
             return failure(str(exc))
         except Exception as exc:
+            _events.emit(
+                "tool_call_end",
+                wid,
+                WORKER_NAME,
+                {"backend": getattr(active_backend, "name", "?"), "status": "error", "error": str(exc)},
+            )
             return failure(f"model backend raised {type(exc).__name__}: {exc}")
 
         if not isinstance(raw, str):

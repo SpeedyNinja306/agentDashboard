@@ -14,6 +14,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from orchestrator import events
 from workers import research_specialist
 from workers.contracts import WorkerResult, failure
 
@@ -27,11 +28,27 @@ class OrchestratorState(TypedDict, total=False):
 
 
 def _dispatch(state: OrchestratorState) -> dict[str, Any]:
-    return {"worker": ONLY_WORKER}
+    oid = events.orchestrator_id()
+    events.emit("dispatch_start", oid, events.ORCHESTRATOR_NAME, {"goal": state.get("goal", "")})
+    selected = ONLY_WORKER
+    events.emit("dispatch_end", oid, events.ORCHESTRATOR_NAME, {"selected_worker": selected})
+    return {"worker": selected}
 
 
 def _run_worker(state: OrchestratorState) -> dict[str, Any]:
-    return {"result": research_specialist.run(state.get("goal", ""))}
+    worker_name = state.get("worker", ONLY_WORKER)
+    wid = events.spawn_worker()
+    events.emit("worker_spawned", wid, worker_name, {"goal": state.get("goal", "")})
+
+    result = research_specialist.run(state.get("goal", ""))
+
+    if result.status == "ok":
+        preview = (result.result or "")[:120]
+        events.emit("completed", wid, worker_name, {"status": "ok", "result_preview": preview})
+    else:
+        events.emit("error", wid, worker_name, {"error": result.error})
+
+    return {"result": result}
 
 
 def _finalize(state: OrchestratorState) -> dict[str, Any]:
@@ -60,12 +77,27 @@ def build_graph() -> Any:
 
 def run_goal(goal: str) -> WorkerResult:
     """Run `goal` through the loop. Returns an envelope for every outcome, including graph faults."""
+    events.start_run()
     try:
         final_state = build_graph().invoke({"goal": goal})
     except Exception as exc:
+        oid = events.orchestrator_id()
+        events.emit(
+            "error",
+            oid,
+            events.ORCHESTRATOR_NAME,
+            {"error": f"orchestrator graph failed with {type(exc).__name__}: {exc}"},
+        )
         return failure(f"orchestrator graph failed with {type(exc).__name__}: {exc}")
 
     result = final_state.get("result") if isinstance(final_state, dict) else None
     if isinstance(result, WorkerResult):
         return result
+    oid = events.orchestrator_id()
+    events.emit(
+        "error",
+        oid,
+        events.ORCHESTRATOR_NAME,
+        {"error": "orchestrator graph returned no result envelope"},
+    )
     return failure("orchestrator graph returned no result envelope")
