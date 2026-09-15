@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WorkerEvent, WorkerState, WsStatus } from '../types';
 
-// Workers the dashboard knows about. Extend when new worker types are added.
-const KNOWN_WORKERS = new Set(['research-specialist']);
+// Workers the dashboard renders as nodes. Extend when new worker types are added; each becomes an
+// independent node with its own live status, driven only by events whose agent_name matches.
+export const KNOWN_WORKER_NAMES = ['research-specialist', 'coding-agent'] as const;
 
-const DEFAULT_STATE: WorkerState = {
-  name: 'research-specialist',
-  status: 'idle',
-  lastEventType: null,
-  lastEventTimestamp: null,
-};
+const KNOWN_WORKERS = new Set<string>(KNOWN_WORKER_NAMES);
+
+function freshState(name: string): WorkerState {
+  return { name, status: 'idle', lastEventType: null, lastEventTimestamp: null };
+}
 
 function initialWorkerMap(): Record<string, WorkerState> {
-  return { 'research-specialist': { ...DEFAULT_STATE } };
+  return Object.fromEntries(KNOWN_WORKER_NAMES.map(name => [name, freshState(name)]));
 }
 
 function applyEvent(
@@ -22,7 +22,7 @@ function applyEvent(
   const { event_type, agent_name, timestamp } = event;
   if (!KNOWN_WORKERS.has(agent_name)) return prev;
 
-  const current = prev[agent_name] ?? { name: agent_name, status: 'idle', lastEventType: null, lastEventTimestamp: null };
+  const current = prev[agent_name] ?? freshState(agent_name);
 
   let { status } = current;
   if (event_type === 'worker_spawned') status = 'running';

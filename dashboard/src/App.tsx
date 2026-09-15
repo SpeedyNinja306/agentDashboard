@@ -9,12 +9,13 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import { TaskModal } from './components/TaskModal';
+import { ORCH_WS_URL } from './config';
 import { useWorkerEvents } from './hooks/useWorkerEvents';
 import { WorkerNode } from './nodes/WorkerNode';
 import type { TaskRecord, WorkerNodeData } from './types';
 import type { WorkerNodeType } from './nodes/WorkerNode';
 
-const WS_URL = 'ws://localhost:8000/events?replay=50';
+const WS_URL = ORCH_WS_URL;
 
 const nodeTypes = { worker: WorkerNode };
 
@@ -22,9 +23,20 @@ const INITIAL_NODES: WorkerNodeType[] = [
   {
     id: 'research-specialist',
     type: 'worker',
-    position: { x: 240, y: 180 },
+    position: { x: 120, y: 180 },
     data: {
       workerName: 'research-specialist',
+      status: 'idle',
+      lastEventType: null,
+      lastEventTimestamp: null,
+    },
+  },
+  {
+    id: 'coding-agent',
+    type: 'worker',
+    position: { x: 460, y: 180 },
+    data: {
+      workerName: 'coding-agent',
       status: 'idle',
       lastEventType: null,
       lastEventTimestamp: null,

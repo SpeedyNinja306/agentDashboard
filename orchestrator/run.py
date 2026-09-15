@@ -11,6 +11,7 @@ import argparse
 import sys
 
 from orchestrator.graph import run_goal
+from workers import registry
 from workers.contracts import WorkerResult, failure
 from workers.model import ENV_VAR
 
@@ -29,12 +30,18 @@ class _StructuredArgumentParser(argparse.ArgumentParser):
 def _build_parser() -> argparse.ArgumentParser:
     parser = _StructuredArgumentParser(
         prog="python -m orchestrator.run",
-        description="Dispatch one goal to the research-specialist worker and print the result.",
+        description="Dispatch one goal to a worker and print the result envelope.",
     )
     parser.add_argument(
         "goal",
         nargs="*",
-        help="the research goal; quote it, or pass it as several words",
+        help="the goal; quote it, or pass it as several words",
+    )
+    parser.add_argument(
+        "--worker",
+        default=None,
+        metavar="NAME",
+        help="dispatch to a specific worker; omit to let the router choose from the goal",
     )
     parser.add_argument(
         "--backend",
@@ -69,8 +76,17 @@ def main(argv: list[str] | None = None) -> int:
               compact=args.compact)
         return EXIT_ERROR
 
+    if args.worker is not None and not registry.is_known(args.worker):
+        _emit(
+            failure(
+                f"unknown worker '{args.worker}'; known workers: {list(registry.worker_names())}"
+            ),
+            compact=args.compact,
+        )
+        return EXIT_ERROR
+
     try:
-        result = run_goal(goal)
+        result = run_goal(goal, worker=args.worker)
     except KeyboardInterrupt:
         _emit(failure("interrupted by user"), compact=args.compact)
         return EXIT_ERROR

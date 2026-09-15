@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
+import { ORCH_HTTP_BASE } from '../config';
 import type { TaskRecord } from '../types';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = ORCH_HTTP_BASE;
 
 interface TaskModalProps {
   workerName: string;
