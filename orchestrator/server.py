@@ -41,6 +41,9 @@ from orchestrator.graph import run_goal
 from orchestrator.hub import EventHub, Subscriber
 from orchestrator.tasks import QueueFull, TaskQueue, TaskRecord
 
+#: Workers that accept direct task submissions from the dashboard.
+KNOWN_WORKERS: frozenset[str] = frozenset({"research-specialist"})
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
@@ -113,6 +116,33 @@ def _register_routes(app: FastAPI, hub: EventHub, queue: TaskQueue) -> None:
 
     @app.post("/tasks", status_code=status.HTTP_202_ACCEPTED)
     async def submit_task(body: SubmitGoal) -> dict[str, Any]:
+        goal = body.goal.strip()
+        if not goal:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="goal is empty; nothing to research",
+            )
+        try:
+            record = queue.submit(goal)
+        except QueueFull as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
+            ) from exc
+        return record.to_dict()
+
+    @app.post("/workers/{worker_name}/tasks", status_code=status.HTTP_202_ACCEPTED)
+    async def submit_worker_task(worker_name: str, body: SubmitGoal) -> dict[str, Any]:
+        """Submit a goal to a specific named worker.
+
+        The worker name must be one of the registered workers. Today there is only one
+        (research-specialist), but the endpoint is named so the dashboard can address
+        workers by identity once more are added.
+        """
+        if worker_name not in KNOWN_WORKERS:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown worker '{worker_name}'; known workers: {sorted(KNOWN_WORKERS)}",
+            )
         goal = body.goal.strip()
         if not goal:
             raise HTTPException(
