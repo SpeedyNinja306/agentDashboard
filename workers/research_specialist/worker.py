@@ -6,6 +6,7 @@ never returns free text, so the orchestrator can branch on `status` without defe
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from orchestrator import events as _events
@@ -16,7 +17,12 @@ WORKER_NAME = "research-specialist"
 PROMPT_VERSION = "v1"
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_PROMPT_PATH = _REPO_ROOT / "prompts" / WORKER_NAME / f"{PROMPT_VERSION}.md"
+_PROMPT_DIR = _REPO_ROOT / "prompts" / WORKER_NAME
+_PROMPT_PATH = _PROMPT_DIR / f"{PROMPT_VERSION}.md"
+
+#: A version is `vN`. Constraining the shape keeps a caller-supplied version from escaping the
+#: prompt directory.
+_VERSION_RE = re.compile(r"^v\d+$")
 
 MAX_GOAL_CHARS = 8_000
 
@@ -33,17 +39,32 @@ _FILLER_WORDS = frozenset(
 )
 
 
-def run(goal: str, *, backend: ModelBackend | None = None) -> WorkerResult:
-    """Research `goal` and return the result envelope."""
+def run(
+    goal: str,
+    *,
+    backend: ModelBackend | None = None,
+    prompt_version: str | None = None,
+) -> WorkerResult:
+    """Research `goal` and return the result envelope.
+
+    `prompt_version` picks which `prompts/research-specialist/vN.md` to load. It exists so the
+    eval harness can score a candidate prompt against the golden set before that version becomes
+    the shipped default; production callers omit it.
+    """
     try:
         rejection = _reject_goal(goal)
         if rejection is not None:
             return rejection
 
+        version = prompt_version or PROMPT_VERSION
+        if not _VERSION_RE.match(version):
+            return failure(f"prompt_version '{version}' is not of the form vN")
+
+        prompt_path = _PROMPT_DIR / f"{version}.md"
         try:
-            system_prompt = _load_prompt()
+            system_prompt = _load_prompt(prompt_path)
         except OSError as exc:
-            return failure(f"could not read prompt {_PROMPT_PATH.name} for {WORKER_NAME}: {exc}")
+            return failure(f"could not read prompt {prompt_path.name} for {WORKER_NAME}: {exc}")
 
         try:
             active_backend = backend if backend is not None else resolve_backend()
@@ -55,7 +76,11 @@ def run(goal: str, *, backend: ModelBackend | None = None) -> WorkerResult:
             "tool_call_start",
             wid,
             WORKER_NAME,
-            {"backend": getattr(active_backend, "name", "?"), "goal_preview": goal.strip()[:80]},
+            {
+                "backend": getattr(active_backend, "name", "?"),
+                "prompt_version": version,
+                "goal_preview": goal.strip()[:80],
+            },
         )
 
         try:
@@ -131,8 +156,8 @@ def _words(text: str) -> list[str]:
     return ["".join(ch for ch in token if ch.isalnum()).lower() for token in text.split()]
 
 
-def _load_prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8")
+def _load_prompt(path: Path = _PROMPT_PATH) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def _strip_code_fence(raw: str) -> str:
